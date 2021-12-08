@@ -1,28 +1,25 @@
 package com.example.o0orick.camera;
 
-import android.animation.Animator;
 import android.graphics.Bitmap;
-import android.graphics.Matrix;
 import android.graphics.SurfaceTexture;
 import android.hardware.usb.UsbDevice;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
 import android.util.Log;
 import android.view.Surface;
 import android.view.View;
 import android.view.View.OnClickListener;
 import android.view.Window;
 import android.view.WindowManager;
-import android.widget.AdapterView;
-import android.widget.CompoundButton;
 import android.widget.ImageButton;
-import android.widget.ImageView;
-import android.widget.SeekBar;
-import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.ToggleButton;
 
+
+import com.dynamsoft.dbr.BarcodeReader;
+import com.dynamsoft.dbr.BarcodeReaderException;
+import com.dynamsoft.dbr.DBRDLSLicenseVerificationListener;
+import com.dynamsoft.dbr.DMDLSConnectionParameters;
+import com.dynamsoft.dbr.TextResult;
 import com.serenegiant.common.BaseActivity;
 import com.serenegiant.usb.CameraDialog;
 import com.serenegiant.usb.IFrameCallback;
@@ -31,30 +28,17 @@ import com.serenegiant.usb.USBMonitor.OnDeviceConnectListener;
 import com.serenegiant.usb.USBMonitor.UsbControlBlock;
 import com.serenegiant.usb.UVCCamera;
 import com.serenegiant.usbcameracommon.UVCCameraHandler;
-import com.serenegiant.utils.ViewAnimationHelper;
 import com.serenegiant.widget.CameraViewInterface;
 
-import org.opencv.android.BaseLoaderCallback;
-import org.opencv.android.LoaderCallbackInterface;
-import org.opencv.android.OpenCVLoader;
-import org.opencv.android.Utils;
-import org.opencv.core.Mat;
-import org.opencv.core.MatOfPoint;
-import org.opencv.core.MatOfRect;
-import org.opencv.core.Rect;
-import org.opencv.imgproc.Imgproc;
-
-import java.math.BigDecimal;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
+
 
 public final class MainActivity extends BaseActivity implements CameraDialog.CameraDialogParent {
     private static final boolean DEBUG = true;	// TODO set false on release
     private static final String TAG = "MainActivity";
 
     /**
-     * 操作锁
+     * lock
      */
 	private final Object mSync = new Object();
 
@@ -86,8 +70,6 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
      */
     private static final int PREVIEW_MODE = 0; // YUV
 
-    protected static final int SETTINGS_HIDE_DELAY_MS = 2500;
-
     /**
      * for accessing USB
      */
@@ -104,34 +86,8 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
      * for open&start / stop&close camera preview
      */
     private ImageButton mCameraButton;
-    private ImageView mImageView;
-    private boolean isScaling = false;
-    private boolean isInCapturing = false;
-
-    private int[][] capture_solution = {{640,480}, {800,600},{1024,768}, {1280,1024}};
-    private int mCaptureWidth = capture_solution[0][0];
-    private int mCaptureHeight = capture_solution[0][1];
-
-    /**
-     * opencv的一个抽象类，为了支持opencv与app之间的相互作用，
-     * 该类声明了一个callback，在opencv  manager之后执行，这个回调是为了使opencv在合适的地方进行初始化
-     */
-    private BaseLoaderCallback mLoaderCallback = new BaseLoaderCallback(this) {
-        @Override
-        public void onManagerConnected(int status) {
-            switch (status) {
-                case LoaderCallbackInterface.SUCCESS:
-                {
-                    Log.i(TAG, "OpenCV loaded successfully");
-                } break;
-                default:
-                {
-                    super.onManagerConnected(status);
-                } break;
-            }
-        }
-    };
-
+    private TextView resultTextView;
+    private BarcodeReader barcodeReader;
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
@@ -144,38 +100,46 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         setContentView(R.layout.activity_main);
+        try {
+            initDBR();
+        } catch (BarcodeReaderException e) {
+            e.printStackTrace();
+        }
         mCameraButton = findViewById(R.id.imageButton);
+        resultTextView = findViewById(R.id.resultTextView);
         mCameraButton.setOnClickListener(mOnClickListener);
-
-        mImageView = (ImageView)findViewById(R.id.imageView);
-
-        mCaptureWidth = capture_solution[0][0];
-        mCaptureHeight = capture_solution[0][1];
-        bitmap = Bitmap.createBitmap(mCaptureWidth, mCaptureHeight, Bitmap.Config.RGB_565);
 
         final View view = findViewById(R.id.camera_view);
         mUVCCameraView = (CameraViewInterface)view;
+        //view.setLayoutParams(new FrameLayout.LayoutParams(view.getWidth(), view.getWidth()*bitmap.getHeight()/bitmap.getWidth()));
         mUVCCameraView.setAspectRatio(PREVIEW_WIDTH / (float)PREVIEW_HEIGHT);
 
-		synchronized (mSync) {
+        synchronized (mSync) {
 	        mUSBMonitor = new USBMonitor(this, mOnDeviceConnectListener);
 	        mCameraHandler = UVCCameraHandler.createHandler(this, mUVCCameraView,
 	                USE_SURFACE_ENCODER ? 0 : 1, PREVIEW_WIDTH, PREVIEW_HEIGHT, PREVIEW_MODE);
+
 		}
+    }
+
+    private void initDBR() throws BarcodeReaderException {
+        barcodeReader = new BarcodeReader();
+        DMDLSConnectionParameters dbrParameters = new DMDLSConnectionParameters();
+        dbrParameters.organizationID = "200001";
+        barcodeReader.initLicenseFromDLS(dbrParameters, new DBRDLSLicenseVerificationListener() {
+            @Override
+            public void DLSLicenseVerificationCallback(boolean isSuccessful, Exception e) {
+                if (!isSuccessful) {
+                    e.printStackTrace();
+                }
+            }
+        });
     }
 
     @Override
     protected void onStart() {
         super.onStart();
         Log.v(TAG, "onStart:");
-        if (!OpenCVLoader.initDebug()) {
-            Log.d(TAG, "Internal OpenCV library not found. Using OpenCV Manager for initialization");
-            OpenCVLoader.initAsync(OpenCVLoader.OPENCV_VERSION_3_0_0, this, mLoaderCallback);
-        } else {
-            Log.d(TAG, "OpenCV library found inside package. Using it!");
-            mLoaderCallback.onManagerConnected(LoaderCallbackInterface.SUCCESS);
-        }
-
 		synchronized (mSync) {
         	mUSBMonitor.register();
 		}
@@ -233,15 +197,10 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
 		synchronized (mSync) {
 			if (mCameraHandler != null) {
                 final SurfaceTexture st = mUVCCameraView.getSurfaceTexture();
-                /**
-                 * 由于surfaceview由另一个线程处理，这里使用消息处理机制
-                 * 对Frame进行回调处理
-                 */
 				mCameraHandler.setPreviewCallback(mIFrameCallback);
                 mCameraHandler.startPreview(new Surface(st));
 			}
 		}
-        updateItems();
     }
 
     private final OnDeviceConnectListener mOnDeviceConnectListener = new OnDeviceConnectListener() {
@@ -257,7 +216,6 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
                 if (mCameraHandler != null) {
 	                mCameraHandler.open(ctrlBlock);
 	                startPreview();
-	                updateItems();
 				}
             }
         }
@@ -330,81 +288,43 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
         return mCameraHandler != null ? mCameraHandler.resetValue(flag) : 0;
     }
 
-    /**
-     * 利用Activity.runOnUiThread(Runnable)把更新ui的代码创建在Runnable中，
-     * 然后在需要更新ui时，把这个Runnable对象传给Activity.runOnUiThread(Runnable)
-     */
-    private void updateItems() {
-        runOnUiThread(mUpdateItemsOnUITask, 100);
-    }
-
-    private final Runnable mUpdateItemsOnUITask = new Runnable() {
-        @Override
-        public void run() {
-            if (isFinishing()) return;
-            final int visible_active = isActive() ? View.VISIBLE : View.INVISIBLE;
-            mImageView.setVisibility(visible_active);
-        }
-    };
 
     // if you need frame data as byte array on Java side, you can use this callback method with UVCCamera#setFrameCallback
     // if you need to create Bitmap in IFrameCallback, please refer following snippet.
-    private Bitmap bitmap = null;//Bitmap.createBitmap(640, 480, Bitmap.Config.RGB_565);
-    private final Bitmap srcBitmap = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.RGB_565);
-    private String WarnText;
-
     private final IFrameCallback mIFrameCallback = new IFrameCallback() {
         @Override
         public void onFrame(final ByteBuffer frame) {
+            Bitmap srcBitmap = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.RGB_565);
+            srcBitmap.copyPixelsFromBuffer(frame);
+            decode(srcBitmap);
             frame.clear();
-            if(!isActive() || isInCapturing){
-                return;
-            }
-            if(bitmap == null){
-                Toast.makeText(MainActivity.this, "错误：Bitmap为空", Toast.LENGTH_SHORT).show();
-                return;
-            }
-            /**
-             * 这里进行opencv操作
-             * srcBitmap:源
-             * bitmap:处理后
-             */
-            synchronized (bitmap) {
-                srcBitmap.copyPixelsFromBuffer(frame);
-                WarnText = "";
-
-                if(bitmap.getWidth() != mCaptureWidth || bitmap.getHeight() != mCaptureHeight){
-                    bitmap = Bitmap.createBitmap(mCaptureWidth, mCaptureHeight, Bitmap.Config.RGB_565);
-                }
-
-                Mat rgbMat = new Mat();
-                Mat grayMat = new Mat();
-                bitmap = Bitmap.createBitmap(srcBitmap.getWidth(), srcBitmap.getHeight(), Bitmap.Config.RGB_565);
-                Utils.bitmapToMat(srcBitmap, rgbMat);//convert original bitmap to Mat, R G B.
-                Imgproc.cvtColor(rgbMat, grayMat, Imgproc.COLOR_RGB2GRAY);//rgbMat to gray grayMat
-                Utils.matToBitmap(grayMat, bitmap); //convert mat to bitmap
-                Log.i(TAG, "procSrc2Gray sucess...");
-
-            }
-            mImageView.post(mUpdateImageTask);
         }
     };
 
-    private final Runnable mUpdateImageTask = new Runnable() {
-        @Override
-        public void run() {
-            synchronized (bitmap) {
-                mImageView.setImageBitmap(bitmap);
-            }
+    private void decode(Bitmap bitmap){
+        try {
+            final TextResult[] results = barcodeReader.decodeBufferedImage(bitmap,"");
+            Log.d("DBR",String.valueOf(results.length));
+            runOnUiThread(
+                    new Runnable() {
+                        @Override
+                        public void run() {
+                            StringBuilder sb = new StringBuilder();
+                            sb.append("Found ");
+                            sb.append(results.length);
+                            sb.append(" barcodes:");
+                            sb.append("\n");
+                            for (TextResult tr : results){
+                                sb.append(tr.barcodeText);
+                                sb.append("\n");
+                            }
+                            resultTextView.setText(sb.toString());
+                        }
+                    }
+            );
+        } catch (Exception e){
+            e.printStackTrace();
         }
-    };
-
-
-
-
-
-
-
-
+    }
 
 }

@@ -32,9 +32,9 @@ dependencies {
     androidTestImplementation 'com.android.support.test:runner:1.0.2'
     androidTestImplementation 'com.android.support.test.espresso:espresso-core:3.0.2'
 
-    implementation(name: 'openCVLibrary', ext: 'aar')
     implementation(name: 'libuvccamera', ext: 'aar')
     implementation(name: 'usbCameraCommon', ext: 'aar')
+    implementation 'com.dynamsoft:dynamsoftbarcodereader:8.8.0@aar'
     implementation("com.serenegiant:common:1.5.20") {
         exclude module: 'support-v4'
     }

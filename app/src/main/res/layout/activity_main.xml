@@ -8,19 +8,15 @@
 
 	<com.serenegiant.widget.UVCCameraTextureView
 		android:id="@+id/camera_view"
-		android:layout_width="20dp"
-		android:layout_height="16dp"
-		android:layout_centerInParent="true" />
+		android:layout_width="407dp"
+		android:layout_height="720dp"
+		android:layout_centerInParent="true"
+		app:layout_constraintBottom_toBottomOf="parent"
+		app:layout_constraintEnd_toEndOf="parent"
+		app:layout_constraintStart_toStartOf="parent"
+		app:layout_constraintTop_toTopOf="parent" />
 
-    <ImageView
-        android:id="@+id/imageView"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:scaleType="fitCenter"
-        android:src="?attr/colorBackgroundFloating"
-        app:srcCompat="@color/BLACK" />
-
-    <ImageButton
+	<ImageButton
         android:id="@+id/imageButton"
         android:layout_width="50dp"
         android:layout_height="50dp"
@@ -31,5 +27,18 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
+
+	<TextView
+		android:id="@+id/resultTextView"
+		android:layout_width="wrap_content"
+		android:layout_height="wrap_content"
+		android:shadowColor="#000000"
+		android:shadowRadius="2"
+		android:text="Result:"
+		android:textColor="#FFFFFF"
+		app:layout_constraintEnd_toEndOf="parent"
+		app:layout_constraintHorizontal_bias="0.0"
+		app:layout_constraintStart_toStartOf="parent"
+		app:layout_constraintTop_toTopOf="parent" />
 
 </android.support.constraint.ConstraintLayout>
