@@ -1,6 +1,9 @@
 package com.example.o0orick.camera;
 
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.SurfaceTexture;
 import android.hardware.usb.UsbDevice;
 import android.os.Bundle;
@@ -11,6 +14,7 @@ import android.view.View.OnClickListener;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -19,7 +23,23 @@ import com.dynamsoft.dbr.BarcodeReader;
 import com.dynamsoft.dbr.BarcodeReaderException;
 import com.dynamsoft.dbr.DBRDLSLicenseVerificationListener;
 import com.dynamsoft.dbr.DMDLSConnectionParameters;
+import com.dynamsoft.dbr.EnumResultCoordinateType;
+import com.dynamsoft.dbr.Point;
+import com.dynamsoft.dbr.PublicRuntimeSettings;
 import com.dynamsoft.dbr.TextResult;
+import com.google.zxing.BinaryBitmap;
+import com.google.zxing.ChecksumException;
+import com.google.zxing.DecodeHintType;
+import com.google.zxing.FormatException;
+import com.google.zxing.LuminanceSource;
+import com.google.zxing.NotFoundException;
+import com.google.zxing.PlanarYUVLuminanceSource;
+import com.google.zxing.RGBLuminanceSource;
+import com.google.zxing.Reader;
+import com.google.zxing.Result;
+import com.google.zxing.ResultPoint;
+import com.google.zxing.common.HybridBinarizer;
+import com.google.zxing.multi.qrcode.QRCodeMultiReader;
 import com.serenegiant.common.BaseActivity;
 import com.serenegiant.usb.CameraDialog;
 import com.serenegiant.usb.IFrameCallback;
@@ -30,7 +50,12 @@ import com.serenegiant.usb.UVCCamera;
 import com.serenegiant.usbcameracommon.UVCCameraHandler;
 import com.serenegiant.widget.CameraViewInterface;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Timer;
+import java.util.TimerTask;
 
 
 public final class MainActivity extends BaseActivity implements CameraDialog.CameraDialogParent {
@@ -88,31 +113,36 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
     private ImageButton mCameraButton;
     private TextView resultTextView;
     private BarcodeReader barcodeReader;
+    private Reader reader = null;
+    private ImageView canvasImageView;
+    private Timer timer = new Timer();
 
     @Override
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         Log.v(TAG, "onCreate:");
-
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         requestWindowFeature(Window.FEATURE_NO_TITLE);
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
         setContentView(R.layout.activity_main);
+        reader = new QRCodeMultiReader();
         try {
             initDBR();
         } catch (BarcodeReaderException e) {
             e.printStackTrace();
         }
         mCameraButton = findViewById(R.id.imageButton);
+        canvasImageView = findViewById(R.id.canvasImageView);
+        canvasImageView.setAdjustViewBounds(true);
+        canvasImageView.setScaleType(ImageView.ScaleType.CENTER);
         resultTextView = findViewById(R.id.resultTextView);
         mCameraButton.setOnClickListener(mOnClickListener);
 
         final View view = findViewById(R.id.camera_view);
         mUVCCameraView = (CameraViewInterface)view;
-        //view.setLayoutParams(new FrameLayout.LayoutParams(view.getWidth(), view.getWidth()*bitmap.getHeight()/bitmap.getWidth()));
-        mUVCCameraView.setAspectRatio(PREVIEW_WIDTH / (float)PREVIEW_HEIGHT);
+        mUVCCameraView.setAspectRatio(PREVIEW_WIDTH / (double)PREVIEW_HEIGHT);
 
         synchronized (mSync) {
 	        mUSBMonitor = new USBMonitor(this, mOnDeviceConnectListener);
@@ -134,6 +164,9 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
                 }
             }
         });
+       PublicRuntimeSettings settings = barcodeReader.getRuntimeSettings();
+       settings.resultCoordinateType = EnumResultCoordinateType.RCT_PIXEL;
+       barcodeReader.updateRuntimeSettings(settings);
     }
 
     @Override
@@ -216,6 +249,7 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
                 if (mCameraHandler != null) {
 	                mCameraHandler.open(ctrlBlock);
 	                startPreview();
+                    timer.scheduleAtFixedRate(task, 1000, 100);
 				}
             }
         }
@@ -223,6 +257,7 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
         @Override
         public void onDisconnect(final UsbDevice device, final UsbControlBlock ctrlBlock) {
             if (DEBUG) Log.v(TAG, "onDisconnect:");
+            timer.cancel();
             synchronized (mSync) {
                 if (mCameraHandler != null) {
                     queueEvent(new Runnable() {
@@ -294,14 +329,81 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
     private final IFrameCallback mIFrameCallback = new IFrameCallback() {
         @Override
         public void onFrame(final ByteBuffer frame) {
-            Bitmap srcBitmap = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.RGB_565);
-            srcBitmap.copyPixelsFromBuffer(frame);
-            decode(srcBitmap);
-            frame.clear();
+
         }
     };
 
-    private void decode(Bitmap bitmap){
+    private void decodeZxing(final Bitmap srcBitmap, ByteBuffer frame)  {
+        byte[] bytes = new byte[frame.capacity()];
+        frame.get(bytes);
+        LuminanceSource source = new PlanarYUVLuminanceSource(bytes,PREVIEW_WIDTH,PREVIEW_HEIGHT,0,0,PREVIEW_WIDTH,PREVIEW_HEIGHT,false);
+        BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
+        decodeZxing(srcBitmap,bitmap);
+    }
+
+    private void decodeZxing(Bitmap srcBitmap, BinaryBitmap bitmap){
+        int length = 0;
+        Result result = null;
+        try {
+            Map<DecodeHintType,?> hints = new HashMap<>();
+            hints.put(DecodeHintType.TRY_HARDER,null);
+            result = reader.decode(bitmap);
+            length = 1;
+        } catch (NotFoundException e) {
+            e.printStackTrace();
+        } catch (ChecksumException e) {
+            e.printStackTrace();
+        } catch (FormatException e) {
+            e.printStackTrace();
+        }
+        Log.d("DBR",String.valueOf(length));
+        final int finalLength = length;
+        final Result finalResult = result;
+        runOnUiThread(new Runnable() {
+                  @Override
+                  public void run() {
+
+                      StringBuilder sb = new StringBuilder();
+                      sb.append("Found ");
+                      sb.append(finalLength);
+                      sb.append(" barcodes:");
+                      if (finalResult !=null){
+                          Canvas canvas = new Canvas(srcBitmap);
+                          sb.append("\n");
+                          sb.append(finalResult.getText());
+                          ResultPoint[] points = finalResult.getResultPoints();
+                          Log.d("DBR",String.valueOf(points[0].getX()));
+                          Paint paint = new Paint();
+                          paint.setColor(Color.RED);
+                          canvas.drawLine(points[0].getX(), points[0].getY(), points[1].getX(), points[1].getY(),paint);
+                          canvas.drawLine(points[1].getX(), points[1].getY(), points[2].getX(), points[2].getY(),paint);
+                          canvas.drawLine(points[2].getX(), points[2].getY(), points[0].getX(), points[0].getY(),paint);
+                          resultTextView.setText(sb.toString());
+                          canvasImageView.setImageBitmap(srcBitmap);
+                      }else{
+                          Bitmap bm = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
+                          canvasImageView.setImageBitmap(bm);
+                      }
+                  }
+              }
+        );
+    }
+
+    TimerTask task = new TimerTask() {
+        @Override
+        public void run() {
+            Bitmap bmp = mUVCCameraView.captureStillImage();
+            //int[] intArray = new int[bmp.getWidth()*bmp.getHeight()];
+            //copy pixel data from the Bitmap into the 'intArray' array
+            //bmp.getPixels(intArray, 0, bmp.getWidth(), 0, 0, bmp.getWidth(), bmp.getHeight());
+            //LuminanceSource source = new RGBLuminanceSource(bmp.getWidth(), bmp.getHeight(),intArray);
+            //BinaryBitmap bitmap = new BinaryBitmap(new HybridBinarizer(source));
+            //decodeZxing(bmp,bitmap);
+            decode(bmp);
+        }
+    };
+
+    private void decode(final Bitmap bitmap){
         try {
             final TextResult[] results = barcodeReader.decodeBufferedImage(bitmap,"");
             Log.d("DBR",String.valueOf(results.length));
@@ -319,12 +421,39 @@ public final class MainActivity extends BaseActivity implements CameraDialog.Cam
                                 sb.append("\n");
                             }
                             resultTextView.setText(sb.toString());
+                            showOverlay(bitmap,results);
+                            //canvasImageView.setImageBitmap(bitmap);
                         }
                     }
             );
         } catch (Exception e){
             e.printStackTrace();
         }
+    }
+
+    private void showOverlay(Bitmap bitmap, TextResult[] results){
+
+        if (results.length>0){
+            Canvas canvas = new Canvas(bitmap);
+            for (TextResult tr:results){
+                for (int i=0;i<4;i++){
+                    Point[] points = tr.localizationResult.resultPoints;
+                    Paint paint = new Paint();
+                    paint.setColor(Color.RED);
+                    Log.d(TAG,"X: "+points[0].x);
+
+                    canvas.drawLine(points[0].x, points[0].y, points[1].x, points[1].y,paint);
+                    canvas.drawLine(points[1].x, points[1].y, points[2].x, points[2].y,paint);
+                    canvas.drawLine(points[2].x, points[2].y, points[3].x, points[3].y,paint);
+                    canvas.drawLine(points[3].x, points[3].y, points[0].x, points[0].y,paint);
+                }
+            }
+            canvasImageView.setImageBitmap(bitmap);
+        }else{
+            Bitmap bm = Bitmap.createBitmap(PREVIEW_WIDTH, PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
+            canvasImageView.setImageBitmap(bm);
+        }
+
     }
 
 }
